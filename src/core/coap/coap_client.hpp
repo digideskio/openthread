@@ -34,6 +34,7 @@
 #include <common/message.hpp>
 #include <common/timer.hpp>
 #include <net/netif.hpp>
+#include <net/udp6.hpp>
 
 /**
  * @file

@@ -31,9 +31,12 @@
  *   This file implements the CoAP header generation and parsing.
  */
 
+#include <assert.h>
+
 #include <coap/coap_header.hpp>
 #include <common/code_utils.hpp>
 #include <common/encoding.hpp>
+#include <platform/random.h>
 
 namespace Thread {
 namespace Coap {
@@ -308,6 +311,29 @@ const Header::Option *Header::GetNextOption(void)
 
 exit:
     return rval;
+}
+
+void Header::SetToken(uint8_t aTokenLength)
+{
+    assert(aTokenLength <= kMaxTokenLength);
+
+    uint8_t token[kMaxTokenLength] = { 0 };
+    for (uint8_t i = 0; i < aTokenLength; i++)
+    {
+        token[i] = static_cast<uint8_t>(otPlatRandomGet());
+    }
+
+    SetToken(token, aTokenLength);
+}
+
+void Header::SetDefaultResponseHeader(const Header &aRequestHeader)
+{
+    Init();
+    SetType(kTypeAcknowledgment);
+    SetCode(kCodeChanged);
+    SetMessageId(aRequestHeader.GetMessageId());
+    SetToken(aRequestHeader.GetToken(), aRequestHeader.GetTokenLength());
+    Finalize();
 }
 
 }  // namespace Coap

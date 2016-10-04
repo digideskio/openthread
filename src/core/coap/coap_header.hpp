@@ -70,7 +70,10 @@ class Header
 public:
     enum
     {
-        kVersion1 = 1,  ///< Version 1
+        kVersion1           = 1,   ///< Version 1
+        kMinHeaderLength    = 4,   ///< Minimum header length
+        kMaxHeaderLength    = 128, ///< Maximum header length
+        kDefaultTokenLength = 2    ///< Default token length
     };
 
     /**
@@ -210,6 +213,20 @@ public:
     }
 
     /**
+     * This method sets the Token length and randomizes its value.
+     *
+     * @param[in]  aTokenLength  The Length of a Token to set.
+     *
+     */
+    void SetToken(uint8_t aTokenLength);
+
+    // TODO doc
+    bool IsTokenEqual(const Header &otherHeader) const {
+        return ((this->GetTokenLength() == otherHeader.GetTokenLength()) &&
+                (memcmp(this->GetToken(), otherHeader.GetToken(), this->GetTokenLength()) == 0));
+    }
+
+    /**
      * This structure represents a CoAP option.
      *
      */
@@ -319,6 +336,19 @@ public:
      */
     uint8_t GetLength(void) const { return mHeaderLength; }
 
+    /**
+     * This method sets a default response header based on request header.
+     *
+     * @param[in]  aRequestHeader  Request header to base on.
+     *
+     */
+    void SetDefaultResponseHeader(const Header &aRequestHeader);
+
+    // TODO doc
+    inline bool IsEmpty(void) const { return (GetCode() == 0); };
+    inline bool IsRequest(void) const { return (GetCode() >= kCodeGet && GetCode() <= kCodeDelete); };
+    inline bool IsResponse(void) const { return (GetCode() >= kCodeChanged); };
+
 private:
     /**
      * Protocol Constants (RFC 7252).
@@ -328,6 +358,8 @@ private:
     {
         kVersionMask                = 0xc0,  ///< Version mask as specified (RFC 7252).
         kVersionOffset              = 6,     ///< Version offset as specified (RFC 7252).
+
+        kTypeMask                   = 0x30,  ///< Type mask as specified (RFC 7252).
 
         kTokenLengthMask            = 0x0f,  ///< Token Length mask as specified (RFC 7252).
         kTokenLengthOffset          = 0,     ///< Token Length offset as specified (RFC 7252).
@@ -341,12 +373,6 @@ private:
         kOption2ByteExtensionOffset = 269,   ///< Delta/Length offset as specified (RFC 7252).
     };
 
-    enum
-    {
-        kTypeMask = 0x30,
-        kMinHeaderLength = 4,
-        kMaxHeaderLength = 128,
-    };
     union
     {
         struct

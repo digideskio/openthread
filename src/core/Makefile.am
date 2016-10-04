@@ -37,6 +37,7 @@ libopenthread_a_CPPFLAGS            = \
 
 libopenthread_a_SOURCES             = \
     openthread.cpp                    \
+    coap/coap_client.cpp              \
     coap/coap_header.cpp              \
     coap/coap_server.cpp              \
     common/logging.cpp                \
@@ -112,6 +113,7 @@ noinst_HEADERS                      = \
     openthread-core-config.h          \
     openthread-core-default-config.h  \
     openthread-instance.h             \
+    coap/coap_client.hpp              \
     coap/coap_header.hpp              \
     coap/coap_server.hpp              \
     common/code_utils.hpp             \

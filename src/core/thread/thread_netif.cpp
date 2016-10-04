@@ -58,6 +58,7 @@ static const char name[] = "thread";
 ThreadNetif::ThreadNetif(Ip6::Ip6 &aIp6):
     Netif(aIp6),
     mCoapServer(aIp6.mUdp, kCoapUdpPort),
+    mCoapClient(*this),
     mAddressResolver(*this),
     mActiveDataset(*this),
     mPendingDataset(*this),

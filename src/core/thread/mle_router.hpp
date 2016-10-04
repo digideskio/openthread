@@ -38,6 +38,7 @@
 
 #include <coap/coap_header.hpp>
 #include <coap/coap_server.hpp>
+#include <coap/coap_client.hpp>
 #include <common/timer.hpp>
 #include <common/trickle_timer.hpp>
 #include <mac/mac_frame.hpp>
@@ -686,7 +687,9 @@ private:
 
     static void HandleUdpReceive(void *aContext, otMessage aMessage, const otMessageInfo *aMessageInfo);
     void HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
-    void HandleAddressSolicitResponse(Message &aMessage);
+    static void HandleAddressSolicitResponse(void *aContext, Coap::Header &aHeader, Message &aMessage,
+                                             ThreadError result);
+    void HandleAddressSolicitResponse(Coap::Header &aHeader, Message &aMessage, ThreadError result);
     static void HandleAddressRelease(void *aContext, Coap::Header &aHeader, Message &aMessage,
                                      const Ip6::MessageInfo &aMessageInfo);
     void HandleAddressRelease(Coap::Header &aHeader, Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
@@ -748,8 +751,7 @@ private:
     uint8_t mPreviousRouterId;
 
     Coap::Server &mCoapServer;
-    uint8_t mCoapToken[2];
-    uint16_t mCoapMessageId;
+    Coap::Client &mCoapClient;
 };
 
 }  // namespace Mle

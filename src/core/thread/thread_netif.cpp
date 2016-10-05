@@ -102,6 +102,7 @@ ThreadError ThreadNetif::Up(void)
     mIp6.AddNetif(*this);
     mMeshForwarder.Start();
     mCoapServer.Start();
+    mCoapClient.Start();
     mMleRouter.Enable();
     mIsUp = true;
 
@@ -112,6 +113,7 @@ exit:
 ThreadError ThreadNetif::Down(void)
 {
     mCoapServer.Stop();
+    mCoapClient.Stop();
     mMleRouter.Disable();
     mMeshForwarder.Stop();
     mIp6.RemoveNetif(*this);

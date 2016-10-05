@@ -47,8 +47,28 @@ Client::Client(Ip6::Netif &aNetif):
     mRetransmissionTimer(aNetif.GetIp6().mTimerScheduler, &Client::HandleRetransmissionTimer, this)
 {
     mMessageId = static_cast<uint16_t>(otPlatRandomGet());
+}
 
-    mSocket.Open(&Client::HandleUdpReceive, this);
+ThreadError Client::Start()
+{
+    return mSocket.Open(&Client::HandleUdpReceive, this);
+}
+
+ThreadError Client::Stop()
+{
+    Message *message = mPendingRequests.GetHead();
+    Message *messageToRemove;
+
+    while (message != NULL)
+    {
+        messageToRemove = message;
+        message = message->GetNext();
+
+        RemoveMessage(*messageToRemove);
+        messageToRemove->Free();
+    }
+
+    return mSocket.Close();
 }
 
 Message *Client::NewMessage(const Header &aHeader)
@@ -100,7 +120,7 @@ ThreadError Client::SendMessage(Message &aMessage, const Ip6::MessageInfo &aMess
 
 exit:
 
-    if (error != kThreadError_None && messageCopy != NULL)
+    if (error != kThreadError_None)
     {
         mPendingRequests.Dequeue(aMessage);
 

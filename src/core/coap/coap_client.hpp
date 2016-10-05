@@ -57,6 +57,10 @@ public:
 
     Client(Ip6::Netif &aNetif);
 
+    ThreadError Start(void);
+
+    ThreadError Stop(void);
+
     Message *NewMessage(const Header &mHeader);
 
     ThreadError SendMessage(Message &aMessage, const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler,

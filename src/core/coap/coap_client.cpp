@@ -67,7 +67,8 @@ exit:
     return message;
 }
 
-ThreadError Client::SendMessage(Message &aMessage, const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler, void *aContext)
+ThreadError Client::SendMessage(Message &aMessage, const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler,
+                                void *aContext)
 {
     ThreadError error;
     Message *messageCopy = NULL;
@@ -114,12 +115,13 @@ void Client::SendEmptyMessage(const Ip6::Address &aAddress, uint16_t aPort, uint
     VerifyOrExit((message = NewMessage(header)) != NULL, ;);
 
     memset(&messageInfo, 0, sizeof(messageInfo));
-    messageInfo.GetPeerAddr()= aAddress;
+    messageInfo.GetPeerAddr() = aAddress;
     messageInfo.mPeerPort = aPort;
 
     SuccessOrExit(error = mSocket.SendTo(*message, messageInfo));
 
 exit:
+
     if (error != kThreadError_None && message != NULL)
     {
         message->Free();
@@ -264,6 +266,7 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
     }
 
 exit:
+
     if (error == kThreadError_None && rejectMessage)
     {
         if (responseHeader.GetType() == Header::kTypeConfirmable ||

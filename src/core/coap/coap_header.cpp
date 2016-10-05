@@ -318,6 +318,7 @@ void Header::SetToken(uint8_t aTokenLength)
     assert(aTokenLength <= kMaxTokenLength);
 
     uint8_t token[kMaxTokenLength] = { 0 };
+
     for (uint8_t i = 0; i < aTokenLength; i++)
     {
         token[i] = static_cast<uint8_t>(otPlatRandomGet());

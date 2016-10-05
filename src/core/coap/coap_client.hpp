@@ -57,7 +57,8 @@ public:
 
     Message *NewMessage(const Header &mHeader);
 
-    ThreadError SendMessage(Message &aMessage, const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler, void *aContext);
+    ThreadError SendMessage(Message &aMessage, const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler,
+                            void *aContext);
 
     uint16_t GetNextMessageId(void) { return mMessageId++; };
 
@@ -158,10 +159,37 @@ public:
         return aMessage.Read(aMessage.GetLength() - sizeof(*this), sizeof(*this), this);
     };
 
-    // TODO doc
+    /**
+     * This method updates request data in the message.
+     *
+     * @param[in]  aMessage  A reference to the message.
+     *
+     * @returns The number of bytes updated.
+     *
+     */
     int UpdateIn(Message &aMessage) {
         return aMessage.Write(aMessage.GetLength() - sizeof(*this), sizeof(*this), this);
     }
+
+    /**
+     * This method checks if the message shall be sent before the given time.
+     *
+     * @param[in]  aTime  A time to compare.
+     *
+     * @retval TRUE   If the message shall be sent before the given time.
+     * @retval FALSE  Otherwise.
+     */
+    bool IsEarlier(uint32_t aTime) { return (static_cast<int32_t>(aTime - mRetransmissionTime) > 0); };
+
+    /**
+     * This method checks if the message shall be sent after the given time.
+     *
+     * @param[in]  aTime  A time to compare.
+     *
+     * @retval TRUE   If the message shall be sent after the given time.
+     * @retval FALSE  Otherwise.
+     */
+    bool IsLater(uint32_t aTime) { return (static_cast<int32_t>(aTime - mRetransmissionTime) < 0); };
 
 private:
     Ip6::Address                mDestinationAddress;  ///< IPv6 address of the message destination.

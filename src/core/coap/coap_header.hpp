@@ -220,7 +220,15 @@ public:
      */
     void SetToken(uint8_t aTokenLength);
 
-    // TODO doc
+    /**
+     *  This method checks if tokens in two CoAP headers are equal.
+     *
+     *  @param[in]  otherHeader  A header to compare.
+     *
+     * @retval TRUE   If two tokens are equal.
+     * @retval FALSE  If tokens differ in length or value.
+     *
+     */
     bool IsTokenEqual(const Header &otherHeader) const {
         return ((this->GetTokenLength() == otherHeader.GetTokenLength()) &&
                 (memcmp(this->GetToken(), otherHeader.GetToken(), this->GetTokenLength()) == 0));
@@ -344,7 +352,6 @@ public:
      */
     void SetDefaultResponseHeader(const Header &aRequestHeader);
 
-    // TODO doc
     inline bool IsEmpty(void) const { return (GetCode() == 0); };
     inline bool IsRequest(void) const { return (GetCode() >= kCodeGet && GetCode() <= kCodeDelete); };
     inline bool IsResponse(void) const { return (GetCode() >= kCodeChanged); };

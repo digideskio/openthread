@@ -72,32 +72,65 @@ ThreadError Client::SendMessage(Message &aMessage, const Ip6::MessageInfo &aMess
 {
     ThreadError error;
     Message *messageCopy = NULL;
+    Header header;
 
-    // TODO Setup the timer and adjust retransmission parameters.
+    SuccessOrExit(error = header.FromMessage(aMessage));
 
-    // Append request related data to the message buffer.
-    RequestData request(aMessageInfo, aHandler, aContext);
-    SuccessOrExit(error = request.AppendTo(aMessage));
+    if (header.GetType() == Header::kTypeConfirmable)
+    {
+        // Create request related data.
+        RequestData request(aMessageInfo, aHandler, aContext);
 
-    // Create a message copy for lower layers.
-    VerifyOrExit((messageCopy = mSocket.NewMessage(0)) != NULL, error = kThreadError_NoBufs);
-    SuccessOrExit(messageCopy->SetLength(aMessage.GetLength() - sizeof(RequestData)));
-    aMessage.CopyTo(0, 0, aMessage.GetLength() - sizeof(RequestData), *messageCopy);
+        // Enqueue the original message to handle retransmission/response.
+        SuccessOrExit(error = AddConfirmableMessage(aMessage, request));
 
-    // Send the copy.
-    SuccessOrExit(error = mSocket.SendTo(*messageCopy, aMessageInfo));
+        // Create a message copy for lower layers.
+        VerifyOrExit((messageCopy = mSocket.NewMessage(0)) != NULL, error = kThreadError_NoBufs);
+        SuccessOrExit(messageCopy->SetLength(aMessage.GetLength() - sizeof(RequestData)));
+        aMessage.CopyTo(0, 0, aMessage.GetLength() - sizeof(RequestData), *messageCopy);
 
-    // Enqueue the original message to handle retransmission/response.
-    mPendingRequests.Enqueue(aMessage);
+        // Send the copy.
+        SuccessOrExit(error = mSocket.SendTo(*messageCopy, aMessageInfo));
+    }
+    else
+    {
+        // Send the original message.
+        SuccessOrExit(error = mSocket.SendTo(aMessage, aMessageInfo));
+    }
 
 exit:
 
     if (error != kThreadError_None && messageCopy != NULL)
     {
-        messageCopy->Free();
+        mPendingRequests.Dequeue(aMessage);
+
+        if (messageCopy != NULL)
+        {
+            messageCopy->Free();
+        }
     }
 
     return error;
+}
+
+ThreadError Client::AddConfirmableMessage(Message &aMessage, RequestData &aRequestData)
+{
+    ThreadError error;
+
+    SuccessOrExit(error = aRequestData.AppendTo(aMessage));
+
+    // TODO Setup timer.
+
+    mPendingRequests.Enqueue(aMessage);
+
+exit:
+    return error;
+}
+
+void Client::RemoveMessage(Message &aMessage)
+{
+    // TODO Recalculate timer.
+    mPendingRequests.Dequeue(aMessage);
 }
 
 void Client::SendEmptyMessage(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId, Header::Type aType)
@@ -145,7 +178,7 @@ void Client::HandleRetransmissionTimer(void *aContext)
 
 void Client::HandleRetransmissionTimer(void)
 {
-
+    // TODO Implement timer.
 }
 
 void Client::HandleUdpReceive(void *aContext, otMessage aMessage, const otMessageInfo *aMessageInfo)
@@ -181,7 +214,7 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                 Message *messageToRemove = message;
                 message = message->GetNext();
 
-                mPendingRequests.Dequeue(*messageToRemove);
+                RemoveMessage(*messageToRemove);
                 messageToRemove->Free();
 
                 continue;
@@ -198,11 +231,14 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                 if (responseHeader.IsEmpty())
                 {
                     rejectMessage = false;
-                    mPendingRequests.Dequeue(*message);
+                    RemoveMessage(*message);
                     message->Free();
 
-                    requestData.mResponseHandler(requestData.mResponseContext, responseHeader,
-                                                 aMessage, kThreadError_Abort);
+                    if (requestData.mResponseHandler != NULL)
+                    {
+                        requestData.mResponseHandler(requestData.mResponseContext, responseHeader,
+                                                     aMessage, kThreadError_Abort);
+                    }
                 }
 
                 // Silently ignore non-empty reset messages (RFC 7252, p. 4.2).
@@ -226,11 +262,14 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                 {
                     // Piggybacked response.
                     rejectMessage = false;
-                    mPendingRequests.Dequeue(*message);
+                    RemoveMessage(*message);
                     message->Free();
 
-                    requestData.mResponseHandler(requestData.mResponseContext, responseHeader,
-                                                 aMessage, kThreadError_None);
+                    if (requestData.mResponseHandler != NULL)
+                    {
+                        requestData.mResponseHandler(requestData.mResponseContext, responseHeader,
+                                                     aMessage, kThreadError_None);
+                    }
                 }
 
                 // Silently ignore acknowledgments carrying requests (RFC 7252, p. 4.2)
@@ -247,16 +286,19 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                 // Piggybacked response.
                 if (responseHeader.GetType() == Header::kTypeConfirmable)
                 {
-                    // Send ack if it is a CON message.
+                    // Send empty ack if it is a CON message.
                     SendEmptyAck(aMessageInfo.GetPeerAddr(), aMessageInfo.mPeerPort, responseHeader.GetMessageId());
                 }
 
                 rejectMessage = false;
-                mPendingRequests.Dequeue(*message);
+                RemoveMessage(*message);
                 message->Free();
 
-                requestData.mResponseHandler(requestData.mResponseContext, responseHeader,
-                                             aMessage, kThreadError_None);
+                if (requestData.mResponseHandler != NULL)
+                {
+                    requestData.mResponseHandler(requestData.mResponseContext, responseHeader,
+                                                 aMessage, kThreadError_None);
+                }
 
                 ExitNow();
             }
@@ -275,6 +317,22 @@ exit:
             SendReset(aMessageInfo.GetPeerAddr(), aMessageInfo.mPeerPort, responseHeader.GetMessageId());
         }
     }
+}
+
+RequestData::RequestData(const Ip6::MessageInfo &aMessageInfo, Client::CoapResponseHandler aHandler, void *aContext)
+{
+    mDestinationPort = aMessageInfo.mPeerPort;
+    mDestinationAddress = aMessageInfo.GetPeerAddr();
+    mResponseHandler = aHandler;
+    mResponseContext = aContext;
+    mRetransmissionCount = 0;
+
+    uint32_t retransmissionOffset = Timer::SecToMsec(kAckTimeout);
+    retransmissionOffset += otPlatRandomGet() %
+                            (Timer::SecToMsec(kAckTimeout) * kAckRandomFactor - Timer::SecToMsec(kAckTimeout) + 1);
+
+    mRetransmissionTime = Timer::GetNow() + retransmissionOffset;
+    mAcknowledged = false;
 }
 
 }  // namespace Coap

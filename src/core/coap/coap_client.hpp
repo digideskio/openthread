@@ -44,6 +44,8 @@
 namespace Thread {
 namespace Coap {
 
+class RequestData;
+
 class Client
 {
     friend class RequestData;
@@ -64,6 +66,10 @@ public:
 
 
 private:
+    ThreadError AddConfirmableMessage(Message &aMessage, RequestData &aRequestData);
+
+    void RemoveMessage(Message &aMessage);
+
     void SendEmptyMessage(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId, Header::Type aType);
     void SendReset(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId);
     void SendEmptyAck(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId);
@@ -73,30 +79,6 @@ private:
 
     static void HandleUdpReceive(void *aContext, otMessage aMessage, const otMessageInfo *aMessageInfo);
     void HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
-
-    /**
-     * Protocol Constants (RFC 7252).
-     *
-     */
-    enum
-    {
-        // TODO Parametrize these values.
-        kAckTimeout         = 2,
-        kAckRandomFactor    = 1,
-        kMaxRetransmit      = 2,
-        kNStart             = 1,
-        kDefaultLeisure     = 5,
-        kProbingRate        = 1,
-
-        // Note that 2 << (kMaxRetransmit - 1) is equal to kMaxRetransmit power of 2
-        kMaxTransmitSpan    = kAckTimeout * ((2 << (kMaxRetransmit - 1)) - 1) * kAckRandomFactor,
-        kMaxTransmitWait    = kAckTimeout * ((2 << kMaxRetransmit) - 1) * kAckRandomFactor,
-        kMaxLatency         = 100,
-        kProcessingDelay    = kAckTimeout,
-        kMaxRtt             = 2 * kMaxLatency + kAckTimeout,
-        kExchangeLifetime   = kMaxTransmitSpan + 2 * (kMaxLatency) + kProcessingDelay,
-        kNonLifetime        = kMaxTransmitSpan + kMaxLatency
-    };
 
     Ip6::UdpSocket mSocket;
     MessageQueue mPendingRequests;
@@ -124,15 +106,7 @@ public:
      * @param[in]  aContext      Context for the handler function.
      *
      */
-    RequestData(const Ip6::MessageInfo &aMessageInfo, Client::CoapResponseHandler aHandler, void *aContext) {
-        mDestinationPort = aMessageInfo.mPeerPort;
-        mDestinationAddress = aMessageInfo.GetPeerAddr();
-        mResponseHandler = aHandler;
-        mResponseContext = aContext;
-        mRetransmissionCount = 0;
-        mRetransmissionTime = Timer::GetNow() + (Timer::SecToMsec(Client::kAckTimeout) * Client::kAckRandomFactor);
-        mAcknowledged = false;
-    };
+    RequestData(const Ip6::MessageInfo &aMessageInfo, Client::CoapResponseHandler aHandler, void *aContext);
 
     /**
      * This method appends request data to the message.
@@ -192,6 +166,30 @@ public:
     bool IsLater(uint32_t aTime) { return (static_cast<int32_t>(aTime - mRetransmissionTime) < 0); };
 
 private:
+    /**
+     * Protocol Constants (RFC 7252).
+     *
+     */
+    enum
+    {
+        // TODO Parametrize these values.
+        kAckTimeout         = 2,
+        kAckRandomFactor    = 1,
+        kMaxRetransmit      = 2,
+        kNStart             = 1,
+        kDefaultLeisure     = 5,
+        kProbingRate        = 1,
+
+        // Note that 2 << (kMaxRetransmit - 1) is equal to kMaxRetransmit power of 2
+        kMaxTransmitSpan    = kAckTimeout * ((2 << (kMaxRetransmit - 1)) - 1) * kAckRandomFactor,
+        kMaxTransmitWait    = kAckTimeout * ((2 << kMaxRetransmit) - 1) * kAckRandomFactor,
+        kMaxLatency         = 100,
+        kProcessingDelay    = kAckTimeout,
+        kMaxRtt             = 2 * kMaxLatency + kAckTimeout,
+        kExchangeLifetime   = kMaxTransmitSpan + 2 * (kMaxLatency) + kProcessingDelay,
+        kNonLifetime        = kMaxTransmitSpan + kMaxLatency
+    };
+
     Ip6::Address                mDestinationAddress;  ///< IPv6 address of the message destination.
     uint16_t                    mDestinationPort;     ///< UDP port of the message destination.
     Client::CoapResponseHandler mResponseHandler;

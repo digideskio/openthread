@@ -74,6 +74,7 @@ private:
 
     void RemoveMessage(Message &aMessage);
 
+    ThreadError SendCopy(const Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
     void SendEmptyMessage(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId, Header::Type aType);
     void SendReset(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId);
     void SendEmptyAck(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId);
@@ -157,7 +158,7 @@ public:
      * @retval TRUE   If the message shall be sent before the given time.
      * @retval FALSE  Otherwise.
      */
-    bool IsEarlier(uint32_t aTime) { return (static_cast<int32_t>(aTime - mRetransmissionTime) > 0); };
+    bool IsEarlier(uint32_t aTime) { return (static_cast<int32_t>(aTime - mSendTime) > 0); };
 
     /**
      * This method checks if the message shall be sent after the given time.
@@ -167,7 +168,7 @@ public:
      * @retval TRUE   If the message shall be sent after the given time.
      * @retval FALSE  Otherwise.
      */
-    bool IsLater(uint32_t aTime) { return (static_cast<int32_t>(aTime - mRetransmissionTime) < 0); };
+    bool IsLater(uint32_t aTime) { return (static_cast<int32_t>(aTime - mSendTime) < 0); };
 
 private:
     /**
@@ -198,7 +199,8 @@ private:
     uint16_t                    mDestinationPort;     ///< UDP port of the message destination.
     Client::CoapResponseHandler mResponseHandler;
     void                        *mResponseContext;
-    uint32_t                    mRetransmissionTime;  ///< Time when the next retransmission shall be sent.
+    uint32_t                    mSendTime;              ///< Time when the next retransmission shall be sent.
+    uint32_t                    mRetransmissionTimeout;
     uint8_t                     mRetransmissionCount;
     bool                        mAcknowledged: 1;
 } OT_TOOL_PACKED_END;

@@ -91,26 +91,17 @@ ThreadError Client::SendMessage(Message &aMessage, const Ip6::MessageInfo &aMess
                                 void *aContext)
 {
     ThreadError error;
-    Message *messageCopy = NULL;
     Header header;
+    RequestData request;
 
     SuccessOrExit(error = header.FromMessage(aMessage));
 
     if (header.GetType() == Header::kTypeConfirmable)
     {
-        // Create request related data.
-        RequestData request(aMessageInfo, aHandler, aContext);
-
-        // Enqueue the original message to handle retransmission/response.
+        // Create request related data, enqueue the message and send a copy.
+        request = RequestData(aMessageInfo, aHandler, aContext);
         SuccessOrExit(error = AddConfirmableMessage(aMessage, request));
-
-        // Create a message copy for lower layers.
-        VerifyOrExit((messageCopy = mSocket.NewMessage(0)) != NULL, error = kThreadError_NoBufs);
-        SuccessOrExit(messageCopy->SetLength(aMessage.GetLength() - sizeof(RequestData)));
-        aMessage.CopyTo(0, 0, aMessage.GetLength() - sizeof(RequestData), *messageCopy);
-
-        // Send the copy.
-        SuccessOrExit(error = mSocket.SendTo(*messageCopy, aMessageInfo));
+        SuccessOrExit(error = SendCopy(aMessage, aMessageInfo));
     }
     else
     {
@@ -123,11 +114,6 @@ exit:
     if (error != kThreadError_None)
     {
         mPendingRequests.Dequeue(aMessage);
-
-        if (messageCopy != NULL)
-        {
-            messageCopy->Free();
-        }
     }
 
     return error;
@@ -136,10 +122,24 @@ exit:
 ThreadError Client::AddConfirmableMessage(Message &aMessage, RequestData &aRequestData)
 {
     ThreadError error;
+    uint32_t alarmFireTime;
 
     SuccessOrExit(error = aRequestData.AppendTo(aMessage));
 
-    // TODO Setup timer.
+    if (mRetransmissionTimer.IsRunning())
+    {
+        // If timer is already running, check if it should be restarted with earlier fire time.
+        alarmFireTime = mRetransmissionTimer.Gett0() + mRetransmissionTimer.Getdt();
+
+        if (aRequestData.IsEarlier(alarmFireTime))
+        {
+            mRetransmissionTimer.Start(aRequestData.mRetransmissionTimeout);
+        }
+    }
+    else
+    {
+        mRetransmissionTimer.Start(aRequestData.mRetransmissionTimeout);
+    }
 
     mPendingRequests.Enqueue(aMessage);
 
@@ -149,8 +149,39 @@ exit:
 
 void Client::RemoveMessage(Message &aMessage)
 {
-    // TODO Recalculate timer.
     mPendingRequests.Dequeue(aMessage);
+
+    if (mRetransmissionTimer.IsRunning() && (mPendingRequests.GetHead() == NULL))
+    {
+        // No more requests pending, stop the timer.
+        mRetransmissionTimer.Stop();
+    }
+
+    // No need to worry that the earliest pending message was removed -
+    // the timer would just shoot earlier and then it'd be setup again.
+}
+
+ThreadError Client::SendCopy(const Message &aMessage, const Ip6::MessageInfo &aMessageInfo)
+{
+    ThreadError error;
+    Message *messageCopy = NULL;
+
+    // Create a message copy for lower layers.
+    VerifyOrExit((messageCopy = mSocket.NewMessage(0)) != NULL, error = kThreadError_NoBufs);
+    SuccessOrExit(error = messageCopy->SetLength(aMessage.GetLength() - sizeof(RequestData)));
+    aMessage.CopyTo(0, 0, aMessage.GetLength() - sizeof(RequestData), *messageCopy);
+
+    // Send the copy.
+    SuccessOrExit(error = mSocket.SendTo(*messageCopy, aMessageInfo));
+
+exit:
+
+    if (error != kThreadError_None && messageCopy != NULL)
+    {
+        messageCopy->Free();
+    }
+
+    return error;
 }
 
 void Client::SendEmptyMessage(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId, Header::Type aType)
@@ -199,6 +230,73 @@ void Client::HandleRetransmissionTimer(void *aContext)
 void Client::HandleRetransmissionTimer(void)
 {
     // TODO Implement timer.
+    uint32_t now = otPlatAlarmGetNow();
+    uint32_t nextDelta = 0xffffffff;
+    RequestData requestData;
+    Message *message = mPendingRequests.GetHead();
+    Message *nextMessage = NULL;
+    Ip6::MessageInfo messageInfo;
+
+    while (message != NULL)
+    {
+        nextMessage = message->GetNext();
+        requestData.ReadFrom(*message);
+
+        if (requestData.IsLater(now))
+        {
+            // Calculate the next delay and choose the lowest.
+            if (requestData.mSendTime - now < nextDelta)
+            {
+                nextDelta = requestData.mSendTime - now;
+            }
+        }
+        else
+        {
+            if (requestData.mRetransmissionCount < RequestData::kMaxRetransmit)
+            {
+                // Increment retransmission counter and timer.
+                requestData.mRetransmissionCount++;
+                requestData.mRetransmissionTimeout *= 2;
+                requestData.mSendTime = now + requestData.mRetransmissionTimeout;
+
+                requestData.UpdateIn(*message);
+
+                // Check if retransmission time is lower than current lowest.
+                if (requestData.mRetransmissionTimeout < nextDelta)
+                {
+                    nextDelta = requestData.mRetransmissionTimeout;
+                }
+
+                // Retransmit
+                memset(&messageInfo, 0, sizeof(messageInfo));
+                messageInfo.GetPeerAddr() = requestData.mDestinationAddress;
+                messageInfo.mPeerPort = requestData.mDestinationPort;
+
+                SendCopy(*message, messageInfo);
+            }
+            else
+            {
+                RemoveMessage(*message);
+                message->Free();
+
+                // Notify the application of timeout.
+                if (requestData.mResponseHandler != NULL)
+                {
+                    // TODO change handlers to receive pointers instead of references
+                    // TODO adjust error codes
+//                    requestData.mResponseHandler(requestData.mResponseContext, NULL,
+//                                                 NULL, kThreadError_NoFrameReceived);
+                }
+            }
+        }
+
+        message = nextMessage;
+    }
+
+    if (nextDelta != 0xffffffff)
+    {
+        mRetransmissionTimer.Start(nextDelta);
+    }
 }
 
 void Client::HandleUdpReceive(void *aContext, otMessage aMessage, const otMessageInfo *aMessageInfo)
@@ -346,12 +444,11 @@ RequestData::RequestData(const Ip6::MessageInfo &aMessageInfo, Client::CoapRespo
     mResponseHandler = aHandler;
     mResponseContext = aContext;
     mRetransmissionCount = 0;
+    mRetransmissionTimeout = Timer::SecToMsec(kAckTimeout);
+    mRetransmissionTimeout += otPlatRandomGet() %
+                              (Timer::SecToMsec(kAckTimeout) * kAckRandomFactor - Timer::SecToMsec(kAckTimeout) + 1);
 
-    uint32_t retransmissionOffset = Timer::SecToMsec(kAckTimeout);
-    retransmissionOffset += otPlatRandomGet() %
-                            (Timer::SecToMsec(kAckTimeout) * kAckRandomFactor - Timer::SecToMsec(kAckTimeout) + 1);
-
-    mRetransmissionTime = Timer::GetNow() + retransmissionOffset;
+    mSendTime = Timer::GetNow() + mRetransmissionTimeout;
     mAcknowledged = false;
 }
 

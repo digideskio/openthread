@@ -3218,13 +3218,13 @@ void MleRouter::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMes
 //    HandleAddressSolicitResponse(aMessage);
 }
 
-void MleRouter::HandleAddressSolicitResponse(void *aContext, Coap::Header &aHeader, Message &aMessage,
+void MleRouter::HandleAddressSolicitResponse(void *aContext, Coap::Header *aHeader, Message *aMessage,
                                              ThreadError result)
 {
     static_cast<MleRouter *>(aContext)->HandleAddressSolicitResponse(aHeader, aMessage, result);
 }
 
-void MleRouter::HandleAddressSolicitResponse(Coap::Header &aHeader, Message &aMessage, ThreadError result)
+void MleRouter::HandleAddressSolicitResponse(Coap::Header *aHeader, Message *aMessage, ThreadError result)
 {
     (void) result;
 
@@ -3234,8 +3234,10 @@ void MleRouter::HandleAddressSolicitResponse(Coap::Header &aHeader, Message &aMe
     uint8_t routerId;
     bool old;
 
-    VerifyOrExit(aHeader.GetType() == Coap::Header::kTypeAcknowledgment &&
-                 aHeader.GetCode() == Coap::Header::kCodeChanged /*&&
+    VerifyOrExit(result == kThreadError_None && aHeader != NULL && aMessage != NULL, ;);
+
+    VerifyOrExit(aHeader->GetType() == Coap::Header::kTypeAcknowledgment &&
+                 aHeader->GetCode() == Coap::Header::kCodeChanged /*&&
                   TODO Move these checks to the client.
                  header.GetMessageId() == mCoapMessageId &&
                  header.GetTokenLength() == sizeof(mCoapToken) &&
@@ -3243,14 +3245,14 @@ void MleRouter::HandleAddressSolicitResponse(Coap::Header &aHeader, Message &aMe
 
     otLogInfoMle("Received address reply\n");
 
-    SuccessOrExit(ThreadTlv::GetTlv(aMessage, ThreadTlv::kStatus, sizeof(statusTlv), statusTlv));
+    SuccessOrExit(ThreadTlv::GetTlv(*aMessage, ThreadTlv::kStatus, sizeof(statusTlv), statusTlv));
     VerifyOrExit(statusTlv.IsValid() && statusTlv.GetStatus() == statusTlv.kSuccess, ;);
 
-    SuccessOrExit(ThreadTlv::GetTlv(aMessage, ThreadTlv::kRloc16, sizeof(rlocTlv), rlocTlv));
+    SuccessOrExit(ThreadTlv::GetTlv(*aMessage, ThreadTlv::kRloc16, sizeof(rlocTlv), rlocTlv));
     VerifyOrExit(rlocTlv.IsValid(), ;);
     VerifyOrExit(IsRouterIdValid(routerId = GetRouterId(rlocTlv.GetRloc16())), ;);
 
-    SuccessOrExit(ThreadTlv::GetTlv(aMessage, ThreadTlv::kRouterMask, sizeof(routerMaskTlv), routerMaskTlv));
+    SuccessOrExit(ThreadTlv::GetTlv(*aMessage, ThreadTlv::kRouterMask, sizeof(routerMaskTlv), routerMaskTlv));
     VerifyOrExit(routerMaskTlv.IsValid(), ;);
 
     // assign short address

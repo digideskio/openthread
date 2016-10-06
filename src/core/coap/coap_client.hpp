@@ -52,7 +52,7 @@ class Client
 
 public:
 
-    typedef void (*CoapResponseHandler)(void *aContext, Header &aHeader, Message &aMessage,
+    typedef void (*CoapResponseHandler)(void *aContext, Header *aHeader, Message *aMessage,
                                         ThreadError result);
 
     Client(Ip6::Netif &aNetif);

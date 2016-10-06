@@ -229,7 +229,6 @@ void Client::HandleRetransmissionTimer(void *aContext)
 
 void Client::HandleRetransmissionTimer(void)
 {
-    // TODO Implement timer.
     uint32_t now = otPlatAlarmGetNow();
     uint32_t nextDelta = 0xffffffff;
     RequestData requestData;
@@ -258,7 +257,6 @@ void Client::HandleRetransmissionTimer(void)
                 requestData.mRetransmissionCount++;
                 requestData.mRetransmissionTimeout *= 2;
                 requestData.mSendTime = now + requestData.mRetransmissionTimeout;
-
                 requestData.UpdateIn(*message);
 
                 // Check if retransmission time is lower than current lowest.
@@ -268,11 +266,14 @@ void Client::HandleRetransmissionTimer(void)
                 }
 
                 // Retransmit
-                memset(&messageInfo, 0, sizeof(messageInfo));
-                messageInfo.GetPeerAddr() = requestData.mDestinationAddress;
-                messageInfo.mPeerPort = requestData.mDestinationPort;
+                if (!requestData.mAcknowledged)
+                {
+                    memset(&messageInfo, 0, sizeof(messageInfo));
+                    messageInfo.GetPeerAddr() = requestData.mDestinationAddress;
+                    messageInfo.mPeerPort = requestData.mDestinationPort;
 
-                SendCopy(*message, messageInfo);
+                    SendCopy(*message, messageInfo);
+                }
             }
             else
             {
@@ -282,10 +283,8 @@ void Client::HandleRetransmissionTimer(void)
                 // Notify the application of timeout.
                 if (requestData.mResponseHandler != NULL)
                 {
-                    // TODO change handlers to receive pointers instead of references
-                    // TODO adjust error codes
-//                    requestData.mResponseHandler(requestData.mResponseContext, NULL,
-//                                                 NULL, kThreadError_NoFrameReceived);
+                    requestData.mResponseHandler(requestData.mResponseContext, NULL,
+                                                 NULL, kThreadError_NoAck);
                 }
             }
         }
@@ -354,8 +353,8 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
 
                     if (requestData.mResponseHandler != NULL)
                     {
-                        requestData.mResponseHandler(requestData.mResponseContext, responseHeader,
-                                                     aMessage, kThreadError_Abort);
+                        requestData.mResponseHandler(requestData.mResponseContext, NULL,
+                                                     NULL, kThreadError_Abort);
                     }
                 }
 
@@ -374,7 +373,6 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                     rejectMessage = false;
                     requestData.mAcknowledged = true;
                     requestData.UpdateIn(*message);
-                    // TODO HANDLE EMPTY ACK.
                 }
                 else if (responseHeader.IsResponse() && responseHeader.IsTokenEqual(requestHeader))
                 {
@@ -385,8 +383,8 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
 
                     if (requestData.mResponseHandler != NULL)
                     {
-                        requestData.mResponseHandler(requestData.mResponseContext, responseHeader,
-                                                     aMessage, kThreadError_None);
+                        requestData.mResponseHandler(requestData.mResponseContext, &responseHeader,
+                                                     &aMessage, kThreadError_None);
                     }
                 }
 
@@ -414,8 +412,8 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
 
                 if (requestData.mResponseHandler != NULL)
                 {
-                    requestData.mResponseHandler(requestData.mResponseContext, responseHeader,
-                                                 aMessage, kThreadError_None);
+                    requestData.mResponseHandler(requestData.mResponseContext, &responseHeader,
+                                                 &aMessage, kThreadError_None);
                 }
 
                 ExitNow();

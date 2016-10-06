@@ -687,9 +687,9 @@ private:
 
     static void HandleUdpReceive(void *aContext, otMessage aMessage, const otMessageInfo *aMessageInfo);
     void HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
-    static void HandleAddressSolicitResponse(void *aContext, Coap::Header &aHeader, Message &aMessage,
+    static void HandleAddressSolicitResponse(void *aContext, Coap::Header *aHeader, Message *aMessage,
                                              ThreadError result);
-    void HandleAddressSolicitResponse(Coap::Header &aHeader, Message &aMessage, ThreadError result);
+    void HandleAddressSolicitResponse(Coap::Header *aHeader, Message *aMessage, ThreadError result);
     static void HandleAddressRelease(void *aContext, Coap::Header &aHeader, Message &aMessage,
                                      const Ip6::MessageInfo &aMessageInfo);
     void HandleAddressRelease(Coap::Header &aHeader, Message &aMessage, const Ip6::MessageInfo &aMessageInfo);

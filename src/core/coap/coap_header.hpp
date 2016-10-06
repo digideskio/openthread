@@ -352,9 +352,13 @@ public:
      */
     void SetDefaultResponseHeader(const Header &aRequestHeader);
 
-    inline bool IsEmpty(void) const { return (GetCode() == 0); };
-    inline bool IsRequest(void) const { return (GetCode() >= kCodeGet && GetCode() <= kCodeDelete); };
-    inline bool IsResponse(void) const { return (GetCode() >= kCodeChanged); };
+    bool IsEmpty(void) const { return (GetCode() == 0); };
+    bool IsRequest(void) const { return (GetCode() >= kCodeGet && GetCode() <= kCodeDelete); };
+    bool IsResponse(void) const { return (GetCode() >= kCodeChanged); };
+    bool IsConfirmable(void) const { return (GetType() == kTypeConfirmable); };
+    bool IsNonConfirmable(void) const { return (GetType() == kTypeNonConfirmable);  };
+    bool IsAck(void) const { return (GetType() == kTypeAcknowledgment);  };
+    bool IsReset(void) const { return (GetType() == kTypeReset);  };
 
 private:
     /**

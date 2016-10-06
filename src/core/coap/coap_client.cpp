@@ -59,6 +59,7 @@ ThreadError Client::Stop()
     Message *message = mPendingRequests.GetHead();
     Message *messageToRemove;
 
+    // Remove all pending messages.
     while (message != NULL)
     {
         messageToRemove = message;
@@ -75,9 +76,8 @@ Message *Client::NewMessage(const Header &aHeader)
 {
     Message *message = NULL;
 
-    // Assure that header has minimum required length and is terminated.
+    // Assure that header has minimum required length.
     VerifyOrExit(aHeader.GetLength() >= Header::kMinHeaderLength, ;);
-    VerifyOrExit(aHeader.GetBytes()[aHeader.GetLength() - 1] == 0xff, ;);
 
     VerifyOrExit((message = mSocket.NewMessage(aHeader.GetLength())) != NULL, ;);
     message->Prepend(aHeader.GetBytes(), aHeader.GetLength());
@@ -87,8 +87,8 @@ exit:
     return message;
 }
 
-ThreadError Client::SendMessage(Message &aMessage, const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler,
-                                void *aContext)
+ThreadError Client::SendMessage(Message &aMessage, const Ip6::MessageInfo &aMessageInfo,
+                                RequestData::CoapResponseHandler aHandler, void *aContext)
 {
     ThreadError error;
     Header header;
@@ -96,7 +96,8 @@ ThreadError Client::SendMessage(Message &aMessage, const Ip6::MessageInfo &aMess
 
     SuccessOrExit(error = header.FromMessage(aMessage));
 
-    if (header.GetType() == Header::kTypeConfirmable)
+    // TODO support for responses for NON
+    if (header.IsConfirmable())
     {
         // Create request related data, enqueue the message and send a copy.
         request = RequestData(aMessageInfo, aHandler, aContext);
@@ -194,7 +195,6 @@ void Client::SendEmptyMessage(const Ip6::Address &aAddress, uint16_t aPort, uint
     header.Init();
     header.SetType(aType);
     header.SetMessageId(aMessageId);
-    header.Finalize();
 
     VerifyOrExit((message = NewMessage(header)) != NULL, ;);
 
@@ -210,16 +210,6 @@ exit:
     {
         message->Free();
     }
-}
-
-void Client::SendReset(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId)
-{
-    SendEmptyMessage(aAddress, aPort, aMessageId, Header::kTypeReset);
-}
-
-void Client::SendEmptyAck(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId)
-{
-    SendEmptyMessage(aAddress, aPort, aMessageId, Header::kTypeAcknowledgment);
 }
 
 void Client::HandleRetransmissionTimer(void *aContext)
@@ -373,6 +363,13 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                     rejectMessage = false;
                     requestData.mAcknowledged = true;
                     requestData.UpdateIn(*message);
+
+                    // Remove the message if response is not expected.
+                    if (requestData.mResponseHandler == NULL)
+                    {
+                        RemoveMessage(*message);
+                        message->Free();
+                    }
                 }
                 else if (responseHeader.IsResponse() && responseHeader.IsTokenEqual(requestHeader))
                 {
@@ -400,7 +397,7 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                 }
 
                 // Piggybacked response.
-                if (responseHeader.GetType() == Header::kTypeConfirmable)
+                if (responseHeader.IsConfirmable())
                 {
                     // Send empty ack if it is a CON message.
                     SendEmptyAck(aMessageInfo.GetPeerAddr(), aMessageInfo.mPeerPort, responseHeader.GetMessageId());
@@ -427,15 +424,14 @@ exit:
 
     if (error == kThreadError_None && rejectMessage)
     {
-        if (responseHeader.GetType() == Header::kTypeConfirmable ||
-            responseHeader.GetType() == Header::kTypeNonConfirmable)
+        if (responseHeader.IsConfirmable() || responseHeader.IsNonConfirmable())
         {
             SendReset(aMessageInfo.GetPeerAddr(), aMessageInfo.mPeerPort, responseHeader.GetMessageId());
         }
     }
 }
 
-RequestData::RequestData(const Ip6::MessageInfo &aMessageInfo, Client::CoapResponseHandler aHandler, void *aContext)
+RequestData::RequestData(const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler, void *aContext)
 {
     mDestinationPort = aMessageInfo.mPeerPort;
     mDestinationAddress = aMessageInfo.GetPeerAddr();

@@ -44,52 +44,7 @@
 namespace Thread {
 namespace Coap {
 
-class RequestData;
-
-class Client
-{
-    friend class RequestData;
-
-public:
-
-    typedef void (*CoapResponseHandler)(void *aContext, Header *aHeader, Message *aMessage,
-                                        ThreadError result);
-
-    Client(Ip6::Netif &aNetif);
-
-    ThreadError Start(void);
-
-    ThreadError Stop(void);
-
-    Message *NewMessage(const Header &mHeader);
-
-    ThreadError SendMessage(Message &aMessage, const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler,
-                            void *aContext);
-
-    uint16_t GetNextMessageId(void) { return mMessageId++; };
-
-
-private:
-    ThreadError AddConfirmableMessage(Message &aMessage, RequestData &aRequestData);
-
-    void RemoveMessage(Message &aMessage);
-
-    ThreadError SendCopy(const Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
-    void SendEmptyMessage(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId, Header::Type aType);
-    void SendReset(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId);
-    void SendEmptyAck(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId);
-
-    static void HandleRetransmissionTimer(void *aContext);
-    void HandleRetransmissionTimer(void);
-
-    static void HandleUdpReceive(void *aContext, otMessage aMessage, const otMessageInfo *aMessageInfo);
-    void HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
-
-    Ip6::UdpSocket mSocket;
-    MessageQueue mPendingRequests;
-    uint16_t mMessageId;
-    Timer mRetransmissionTimer;
-};
+class Client;
 
 OT_TOOL_PACKED_BEGIN
 class RequestData
@@ -97,6 +52,20 @@ class RequestData
     friend class Client;
 
 public:
+
+    /**
+     * This function pointer is called when a CoAP response is received or request timed-out.
+     *
+     * @param[in]  aContext      A pointer to arbitrary context information.
+     * @param[in]  aHeader       A pointer to the CoAP header.
+     * @param[in]  aMessage      A pointer to the message.
+     * @param[in]  ThreadResult  A result of the CoAP transmission. kThreadError_None if the response
+     *                           was received successfully, otherwise an error code is passed.
+     *
+     */
+    typedef void (*CoapResponseHandler)(void *aContext, Header *aHeader, Message *aMessage,
+                                        ThreadError result);
+
     /**
      * Default constructor for the object.
      *
@@ -111,7 +80,7 @@ public:
      * @param[in]  aContext      Context for the handler function.
      *
      */
-    RequestData(const Ip6::MessageInfo &aMessageInfo, Client::CoapResponseHandler aHandler, void *aContext);
+    RequestData(const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler, void *aContext);
 
     /**
      * This method appends request data to the message.
@@ -195,15 +164,107 @@ private:
         kNonLifetime        = kMaxTransmitSpan + kMaxLatency
     };
 
-    Ip6::Address                mDestinationAddress;  ///< IPv6 address of the message destination.
-    uint16_t                    mDestinationPort;     ///< UDP port of the message destination.
-    Client::CoapResponseHandler mResponseHandler;
-    void                        *mResponseContext;
-    uint32_t                    mSendTime;              ///< Time when the next retransmission shall be sent.
-    uint32_t                    mRetransmissionTimeout;
-    uint8_t                     mRetransmissionCount;
-    bool                        mAcknowledged: 1;
+    Ip6::Address        mDestinationAddress;    ///< IPv6 address of the message destination.
+    uint16_t            mDestinationPort;       ///< UDP port of the message destination.
+    CoapResponseHandler mResponseHandler;       ///< A function pointer that is called on response reception.
+    void                *mResponseContext;      ///< A pointer to arbitrary context information.
+    uint32_t            mSendTime;              ///< Time when the next retransmission shall be sent.
+    uint32_t            mRetransmissionTimeout; ///< Delay that is applied to next retransmission.
+    uint8_t             mRetransmissionCount;   ///< Number of retransmissions.
+    bool                mAcknowledged: 1;       ///< Information that request was acknowledged.
 } OT_TOOL_PACKED_END;
+
+class Client
+{
+    friend class RequestData;
+
+public:
+
+    /**
+     * This constructor initializes the object.
+     *
+     * @param[in]  aNetif  A reference to the network interface that CoAP client should be assigned to.
+     *
+     */
+    Client(Ip6::Netif &aNetif);
+
+    /**
+     * This method starts the CoAP client.
+     *
+     * @retval kThreadError_None  Successfully started the CoAP client.
+     *
+     */
+    ThreadError Start(void);
+
+    /**
+     * This method stops the CoAP client.
+     *
+     * @retval kThreadError_None  Successfully stopped the CoAP client.
+     *
+     */
+    ThreadError Stop(void);
+
+    /**
+     * This method creates a new message with a CoAP header.
+     *
+     * @param[in]  aHeader  A reference to a CoAP header that is used to create the message.
+     *
+     * @returns A pointer to the message or NULL if failed to allocate message.
+     *
+     */
+    Message *NewMessage(const Header &aHeader);
+
+    /**
+     * This method sends a CoAP message.
+     *
+     * If a response for a request is expected, respective function and contex information should be provided.
+     * If no response is expected, these arguments should be NULL pointers.
+     *
+     * @param[in]  aMessage      A reference to the message to send.
+     * @param[in]  aMessageInfo  A reference to the message info associated with @p aMessage.
+     * @param[in]  aHandler      A function pointer that shall be called on response reception or time-out.
+     * @param[in]  aContext      A pointer to arbitrary context information.
+     *
+     * @retval kThreadError_None   Successfully sent CoAP message.
+     * @retval kThreadError_NoBufs Failed to allocate retransmission data.
+     *
+     */
+    ThreadError SendMessage(Message &aMessage, const Ip6::MessageInfo &aMessageInfo,
+                            RequestData::CoapResponseHandler aHandler, void *aContext);
+
+    /**
+     * This method returns unique Message Id that can be used in a CoAP header.
+     *
+     * @returns  Message Id.
+     *
+     */
+    uint16_t GetNextMessageId(void) { return mMessageId++; };
+
+private:
+    ThreadError AddConfirmableMessage(Message &aMessage, RequestData &aRequestData);
+
+    void RemoveMessage(Message &aMessage);
+
+    ThreadError SendCopy(const Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
+    void SendEmptyMessage(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId, Header::Type aType);
+    void SendReset(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId) {
+        SendEmptyMessage(aAddress, aPort, aMessageId, Header::kTypeReset);
+    };
+    void SendEmptyAck(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId) {
+        SendEmptyMessage(aAddress, aPort, aMessageId, Header::kTypeAcknowledgment);
+    };
+
+    static void HandleRetransmissionTimer(void *aContext);
+    void HandleRetransmissionTimer(void);
+
+    static void HandleUdpReceive(void *aContext, otMessage aMessage, const otMessageInfo *aMessageInfo);
+    void HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
+
+    Ip6::UdpSocket mSocket;
+    MessageQueue mPendingRequests;
+    uint16_t mMessageId;
+    Timer mRetransmissionTimer;
+};
 
 }  // namespace Coap
 }  // namespace Thread

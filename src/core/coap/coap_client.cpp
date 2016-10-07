@@ -65,8 +65,7 @@ ThreadError Client::Stop()
         messageToRemove = message;
         message = message->GetNext();
 
-        RemoveMessage(*messageToRemove);
-        messageToRemove->Free();
+        DequeueMessage(*messageToRemove);
     }
 
     return mSocket.Close();
@@ -93,40 +92,56 @@ ThreadError Client::SendMessage(Message &aMessage, const Ip6::MessageInfo &aMess
     ThreadError error;
     Header header;
     RequestData request;
+    Message *storedCopy = NULL;
+    uint16_t copyLength = 0;
 
     SuccessOrExit(error = header.FromMessage(aMessage));
 
-    // TODO support for responses for NON
     if (header.IsConfirmable())
     {
-        // Create request related data, enqueue the message and send a copy.
-        request = RequestData(aMessageInfo, aHandler, aContext);
-        SuccessOrExit(error = AddConfirmableMessage(aMessage, request));
-        SuccessOrExit(error = SendCopy(aMessage, aMessageInfo));
+        // Create a copy of entire message and enqueue it.
+        copyLength = aMessage.GetLength();
     }
-    else
+    else if (header.IsNonConfirmable() && header.IsRequest() && (aHandler != NULL))
     {
-        // Send the original message.
-        SuccessOrExit(error = mSocket.SendTo(aMessage, aMessageInfo));
+        // As we do not retransmit non confirmables, create a copy of header only, for token information.
+        copyLength = header.GetLength();
     }
+
+    if (copyLength > 0)
+    {
+        request = RequestData(header.IsConfirmable(), aMessageInfo, aHandler, aContext);
+        VerifyOrExit((storedCopy = CopyAndEnqueueMessage(aMessage, copyLength, request)) != NULL,
+                     error = kThreadError_NoBufs);
+    }
+
+    SuccessOrExit(error = mSocket.SendTo(aMessage, aMessageInfo));
 
 exit:
 
-    if (error != kThreadError_None)
+    if (error != kThreadError_None && storedCopy != NULL)
     {
-        mPendingRequests.Dequeue(aMessage);
+        DequeueMessage(*storedCopy);
     }
 
     return error;
 }
 
-ThreadError Client::AddConfirmableMessage(Message &aMessage, RequestData &aRequestData)
+Message *Client::CopyAndEnqueueMessage(const Message &aMessage, uint16_t aCopyLength, RequestData &aRequestData)
 {
-    ThreadError error;
+    ThreadError error = kThreadError_None;
+    Message *messageCopy = NULL;
     uint32_t alarmFireTime;
 
-    SuccessOrExit(error = aRequestData.AppendTo(aMessage));
+    // Create a message copy of requested size.
+    VerifyOrExit((messageCopy = mSocket.NewMessage(0)) != NULL, error = kThreadError_NoBufs);
+    SuccessOrExit(error = messageCopy->SetLength(aCopyLength));
+    aMessage.CopyTo(0, 0, aCopyLength, *messageCopy);
 
+    // Append the copy with retransmission data.
+    SuccessOrExit(error = aRequestData.AppendTo(*messageCopy));
+
+    // Setup the timer.
     if (mRetransmissionTimer.IsRunning())
     {
         // If timer is already running, check if it should be restarted with earlier fire time.
@@ -142,13 +157,21 @@ ThreadError Client::AddConfirmableMessage(Message &aMessage, RequestData &aReque
         mRetransmissionTimer.Start(aRequestData.mRetransmissionTimeout);
     }
 
-    mPendingRequests.Enqueue(aMessage);
+    // Enqueue the message.
+    mPendingRequests.Enqueue(*messageCopy);
 
 exit:
-    return error;
+
+    if (error != kThreadError_None && messageCopy != NULL)
+    {
+        messageCopy->Free();
+        messageCopy = NULL;
+    }
+
+    return messageCopy;
 }
 
-void Client::RemoveMessage(Message &aMessage)
+void Client::DequeueMessage(Message &aMessage)
 {
     mPendingRequests.Dequeue(aMessage);
 
@@ -157,6 +180,9 @@ void Client::RemoveMessage(Message &aMessage)
         // No more requests pending, stop the timer.
         mRetransmissionTimer.Stop();
     }
+
+    // Free the message memory.
+    aMessage.Free();
 
     // No need to worry that the earliest pending message was removed -
     // the timer would just shoot earlier and then it'd be setup again.
@@ -234,48 +260,46 @@ void Client::HandleRetransmissionTimer(void)
         if (requestData.IsLater(now))
         {
             // Calculate the next delay and choose the lowest.
-            if (requestData.mSendTime - now < nextDelta)
+            if (requestData.mNextTimerShot - now < nextDelta)
             {
-                nextDelta = requestData.mSendTime - now;
+                nextDelta = requestData.mNextTimerShot - now;
+            }
+        }
+        else if ((requestData.mConfirmable) &&
+                 (requestData.mRetransmissionCount < RequestData::kMaxRetransmit))
+        {
+            // Increment retransmission counter and timer.
+            requestData.mRetransmissionCount++;
+            requestData.mRetransmissionTimeout *= 2;
+            requestData.mNextTimerShot = now + requestData.mRetransmissionTimeout;
+            requestData.UpdateIn(*message);
+
+            // Check if retransmission time is lower than current lowest.
+            if (requestData.mRetransmissionTimeout < nextDelta)
+            {
+                nextDelta = requestData.mRetransmissionTimeout;
+            }
+
+            // Retransmit
+            if (!requestData.mAcknowledged)
+            {
+                memset(&messageInfo, 0, sizeof(messageInfo));
+                messageInfo.GetPeerAddr() = requestData.mDestinationAddress;
+                messageInfo.mPeerPort = requestData.mDestinationPort;
+
+                SendCopy(*message, messageInfo);
             }
         }
         else
         {
-            if (requestData.mRetransmissionCount < RequestData::kMaxRetransmit)
+            // No expected response or acknowledgment, just remove.
+            DequeueMessage(*message);
+
+            // Notify the application of timeout.
+            if (requestData.mResponseHandler != NULL)
             {
-                // Increment retransmission counter and timer.
-                requestData.mRetransmissionCount++;
-                requestData.mRetransmissionTimeout *= 2;
-                requestData.mSendTime = now + requestData.mRetransmissionTimeout;
-                requestData.UpdateIn(*message);
-
-                // Check if retransmission time is lower than current lowest.
-                if (requestData.mRetransmissionTimeout < nextDelta)
-                {
-                    nextDelta = requestData.mRetransmissionTimeout;
-                }
-
-                // Retransmit
-                if (!requestData.mAcknowledged)
-                {
-                    memset(&messageInfo, 0, sizeof(messageInfo));
-                    messageInfo.GetPeerAddr() = requestData.mDestinationAddress;
-                    messageInfo.mPeerPort = requestData.mDestinationPort;
-
-                    SendCopy(*message, messageInfo);
-                }
-            }
-            else
-            {
-                RemoveMessage(*message);
-                message->Free();
-
-                // Notify the application of timeout.
-                if (requestData.mResponseHandler != NULL)
-                {
-                    requestData.mResponseHandler(requestData.mResponseContext, NULL,
-                                                 NULL, kThreadError_NoAck);
-                }
+                requestData.mResponseHandler(requestData.mResponseContext, NULL,
+                                             NULL, kThreadError_NoAck);
             }
         }
 
@@ -315,17 +339,7 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
         if ((requestData.mDestinationAddress == aMessageInfo.GetPeerAddr()) &&
             (requestData.mDestinationPort == aMessageInfo.mPeerPort))
         {
-            if (requestHeader.FromMessage(*message) != kThreadError_None)
-            {
-                // Someone stored damaged message, delete it.
-                Message *messageToRemove = message;
-                message = message->GetNext();
-
-                RemoveMessage(*messageToRemove);
-                messageToRemove->Free();
-
-                continue;
-            }
+            assert(requestHeader.FromMessage(*message) == kThreadError_None);
 
             switch (responseHeader.GetType())
             {
@@ -338,8 +352,7 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                 if (responseHeader.IsEmpty())
                 {
                     rejectMessage = false;
-                    RemoveMessage(*message);
-                    message->Free();
+                    DequeueMessage(*message);
 
                     if (requestData.mResponseHandler != NULL)
                     {
@@ -361,22 +374,24 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                 {
                     // Empty acknowledgment, await non-piggybacked response.
                     rejectMessage = false;
-                    requestData.mAcknowledged = true;
-                    requestData.UpdateIn(*message);
+
+                    if (requestData.mConfirmable)
+                    {
+                        requestData.mAcknowledged = true;
+                        requestData.UpdateIn(*message);
+                    }
 
                     // Remove the message if response is not expected.
                     if (requestData.mResponseHandler == NULL)
                     {
-                        RemoveMessage(*message);
-                        message->Free();
+                        DequeueMessage(*message);
                     }
                 }
                 else if (responseHeader.IsResponse() && responseHeader.IsTokenEqual(requestHeader))
                 {
                     // Piggybacked response.
                     rejectMessage = false;
-                    RemoveMessage(*message);
-                    message->Free();
+                    DequeueMessage(*message);
 
                     if (requestData.mResponseHandler != NULL)
                     {
@@ -404,8 +419,7 @@ void Client::HandleUdpReceive(Message &aMessage, const Ip6::MessageInfo &aMessag
                 }
 
                 rejectMessage = false;
-                RemoveMessage(*message);
-                message->Free();
+                DequeueMessage(*message);
 
                 if (requestData.mResponseHandler != NULL)
                 {
@@ -431,7 +445,8 @@ exit:
     }
 }
 
-RequestData::RequestData(const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler, void *aContext)
+RequestData::RequestData(bool aConfirmable, const Ip6::MessageInfo &aMessageInfo,
+                         CoapResponseHandler aHandler, void *aContext)
 {
     mDestinationPort = aMessageInfo.mPeerPort;
     mDestinationAddress = aMessageInfo.GetPeerAddr();
@@ -442,8 +457,17 @@ RequestData::RequestData(const Ip6::MessageInfo &aMessageInfo, CoapResponseHandl
     mRetransmissionTimeout += otPlatRandomGet() %
                               (Timer::SecToMsec(kAckTimeout) * kAckRandomFactor - Timer::SecToMsec(kAckTimeout) + 1);
 
-    mSendTime = Timer::GetNow() + mRetransmissionTimeout;
+    if (aConfirmable)
+    {
+        mNextTimerShot = Timer::GetNow() + mRetransmissionTimeout;
+    }
+    else
+    {
+        mNextTimerShot = Timer::GetNow() + kMaxTransmitWait;
+    }
+
     mAcknowledged = false;
+    mConfirmable = aConfirmable;
 }
 
 }  // namespace Coap

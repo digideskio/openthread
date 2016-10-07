@@ -80,7 +80,8 @@ public:
      * @param[in]  aContext      Context for the handler function.
      *
      */
-    RequestData(const Ip6::MessageInfo &aMessageInfo, CoapResponseHandler aHandler, void *aContext);
+    RequestData(bool aConfirmable, const Ip6::MessageInfo &aMessageInfo,
+                CoapResponseHandler aHandler, void *aContext);
 
     /**
      * This method appends request data to the message.
@@ -127,7 +128,7 @@ public:
      * @retval TRUE   If the message shall be sent before the given time.
      * @retval FALSE  Otherwise.
      */
-    bool IsEarlier(uint32_t aTime) { return (static_cast<int32_t>(aTime - mSendTime) > 0); };
+    bool IsEarlier(uint32_t aTime) { return (static_cast<int32_t>(aTime - mNextTimerShot) > 0); };
 
     /**
      * This method checks if the message shall be sent after the given time.
@@ -137,7 +138,7 @@ public:
      * @retval TRUE   If the message shall be sent after the given time.
      * @retval FALSE  Otherwise.
      */
-    bool IsLater(uint32_t aTime) { return (static_cast<int32_t>(aTime - mSendTime) < 0); };
+    bool IsLater(uint32_t aTime) { return (static_cast<int32_t>(aTime - mNextTimerShot) < 0); };
 
 private:
     /**
@@ -168,10 +169,11 @@ private:
     uint16_t            mDestinationPort;       ///< UDP port of the message destination.
     CoapResponseHandler mResponseHandler;       ///< A function pointer that is called on response reception.
     void                *mResponseContext;      ///< A pointer to arbitrary context information.
-    uint32_t            mSendTime;              ///< Time when the next retransmission shall be sent.
+    uint32_t            mNextTimerShot;         ///< Time when the timer should shoot for this message.
     uint32_t            mRetransmissionTimeout; ///< Delay that is applied to next retransmission.
     uint8_t             mRetransmissionCount;   ///< Number of retransmissions.
     bool                mAcknowledged: 1;       ///< Information that request was acknowledged.
+    bool                mConfirmable: 1;        ///< Information that message is confirmable.
 } OT_TOOL_PACKED_END;
 
 class Client
@@ -241,9 +243,8 @@ public:
     uint16_t GetNextMessageId(void) { return mMessageId++; };
 
 private:
-    ThreadError AddConfirmableMessage(Message &aMessage, RequestData &aRequestData);
-
-    void RemoveMessage(Message &aMessage);
+    Message *CopyAndEnqueueMessage(const Message &aMessage, uint16_t aCopyLength, RequestData &aRequestData);
+    void DequeueMessage(Message &aMessage);
 
     ThreadError SendCopy(const Message &aMessage, const Ip6::MessageInfo &aMessageInfo);
     void SendEmptyMessage(const Ip6::Address &aAddress, uint16_t aPort, uint16_t aMessageId, Header::Type aType);
